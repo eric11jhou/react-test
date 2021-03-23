@@ -1,73 +1,99 @@
 import React, { useState, useEffect, useReducer, useCallback } from 'react';
 import signalsData from './signals';
 
-function WS() {
-    function chReducer(state, action) {
-        if (action.type === 'add') {
-            const newState = state;
-            newState[action.channel] = action.func;
-            return newState;
-        } else if (action.type === 'remove') {
-            const newState = state;
-            delete newState[action.channel];
-            return newState;
-        } else {
-            throw new Error();
+function subReducer(state, action) {
+    if (action.type === 'add') {
+        const newState = state;
+        newState.push({
+            channel: action.channel,
+            func: action.func,
+        });
+        return newState;
+    } else if (action.type === 'remove') {
+        const newState = state;
+        const index = newState.indexOf(action.channel);
+        if (index > -1) {
+            newState.splice(index, 1);
         }
+        return newState;
+    } else {
+        throw new Error();
     }
+}
 
-    const [chState, setChannel] = useReducer(chReducer, {})
-    const signals = signalsData.signals;
-    const wsState = { ws: null };
-    const [wsOK, setWsOK] = useState(false);
-    useEffect(() => {
-        wsState.ws = new WebSocket('wss://api-ws.sofinx.otso-dev.com');
-        wsState.ws.onopen = () => {
+function WS() {
+    const [subscribes, setSubscribe] = useReducer(subReducer, []);
+    const [ws, setWs] = useState(null);
+    const subscribeFunc = useCallback((channel, subscribe, func) => {
+        if (ws == null) return;
+        ws.send(subscribe);
+        setSubscribe({type:'add', channel: channel, func: func});
+    }, [ws, setSubscribe]);
+
+    const unsubscribeFunc = useCallback((channel, unsubscribe) => {
+        if (ws == null) return;
+        ws.send(unsubscribe);
+        setSubscribe({type:'remove', channel: channel});
+    }, [ws, setSubscribe]);
+
+    const wsCallback = useCallback(() => {
+        console.log('s');
+        const newWs = new WebSocket('wss://api-ws.sofinx.otso-dev.com');
+        newWs.onopen = () => {
             console.log('open connection');
-            wsState.ws.send('test#Auth@Gyzu4v8t6BqkXnz1IpsgtvOfujEvyusT6z9O9kgUMTZ0KVowCv4aGYdBbrb4bl9m');
-            setWsOK(true);
+            newWs.send('test#Auth@MfPagzMNbunziBC60eoJwR1lGccXdIV6Ky9F458zLDgbrJVRaiuXhufgUwpktTzz');
+            newWs.send('test#Subscribe@Signals');
         };
-        wsState.ws.onclose = () => {
+        newWs.onclose = () => {
             console.log('close connection')
         };
-        return () => wsState.ws.close();
+        setWs(newWs);
+        return () => newWs.close();
     }, []);
 
     useEffect(() => {
-        wsState.ws.onmessage = (receive) => {
+        console.log('g');
+        const wsClose = wsCallback();
+        return () => wsClose();
+    }, []);
+
+    useEffect(() => {
+        console.log('n');
+        if (ws == null) return;
+        ws.onmessage = (receive) => {
             const data = JSON.parse(receive.data);
-            const channelFunc = chState[data.channel];
-            if (channelFunc != null) channelFunc(data.event);
+            console.log(data);
+            subscribes.forEach((subscribe) => {
+                if (subscribe.channel === data.event.channel) {
+                    subscribe.func(data.event);
+                    return;
+                }
+            });
         };
-        return () => { };
-    }, [chState]);
+    }, [subscribes, ws]);
+    console.log('p');
+    console.log(subscribeFunc);
     return (
-        <SignalsList wsState={wsState} wsOK={wsOK} signals={signals} setChannel={setChannel} />
+        <SignalsList subscribeFunc={subscribeFunc} unsubscribeFunc={unsubscribeFunc}/>
     );
 }
 
-function SignalsList(props) {
-    const signals = props.signals;
-    const setChannel = props.setChannel;
-    const { ws } = props.wsState;
-    const wsOK = props.wsOK;
+function SignalsList({subscribeFunc, unsubscribeFunc}) {
+    console.log('l');
+    console.log('lp');
+    console.log(subscribeFunc);
+    const signals = signalsData.signals;
+
     const listItems = signals.map((signal) =>
         <SignalItem key={signal.id} signal={signal} />
     );
-    const func = useCallback((e) => {
-        console.log(e);
-    }, []);
 
     useEffect(() => {
-        console.log('1', ws, wsOK);
-        if (ws != null && wsOK) {
-            ws.send('test#Subscribe@Signals');
-            setChannel({ type: 'add', channel: 'Signals', func: func })
-            return () => ws.send('test#Unsubscribe@Signals');
-        } else {
-            return () => { };
-        }
-    }, [ws, wsOK]);
+        subscribeFunc('Signals', 'test#Subscribe@Signals', (e) => {
+            console.log('event: ', e);
+        });
+        return () => unsubscribeFunc('Signals', 'test#Subscribe@Signals');
+    }, [subscribeFunc, unsubscribeFunc]);
 
     return (
         <ul>
