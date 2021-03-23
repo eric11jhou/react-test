@@ -4,10 +4,18 @@ import signalsData from './signals';
 function subReducer(state, action) {
     if (action.type === 'add') {
         const newState = state;
-        newState.push({
-            channel: action.channel,
-            func: action.func,
-        });
+        const index = newState.indexOf(action.channel);
+        if (index > -1) {
+            newState[index] = {
+                channel: action.channel,
+                func: action.func,
+            }
+        } else {
+            newState.push({
+                channel: action.channel,
+                func: action.func,
+            });
+        }
         return newState;
     } else if (action.type === 'remove') {
         const newState = state;
@@ -21,30 +29,47 @@ function subReducer(state, action) {
     }
 }
 
+function wsReducer(state, action) {
+    if (action.type === 'open') {
+        return 'open';
+    } else if (action.type === 'success') {
+        return 'success';
+    } else if (action.type === 'close') {
+        return 'close';
+    } else {
+        throw new Error();
+    }
+}
+
 function WS() {
     const [subscribes, setSubscribe] = useReducer(subReducer, []);
     const [ws, setWs] = useState(null);
+    const [wsState, setWsState] = useReducer(wsReducer, 'close');
     const subscribeFunc = useCallback((channel, subscribe, func) => {
         if (ws == null) return;
+        if (wsState != 'success') return;
         ws.send(subscribe);
         setSubscribe({type:'add', channel: channel, func: func});
-    }, [ws, setSubscribe]);
+    }, [ws, wsState, setSubscribe]);
 
     const unsubscribeFunc = useCallback((channel, unsubscribe) => {
         if (ws == null) return;
+        if (wsState != 'success') return;
         ws.send(unsubscribe);
         setSubscribe({type:'remove', channel: channel});
-    }, [ws, setSubscribe]);
+    }, [ws, wsState, setSubscribe]);
 
     const wsCallback = useCallback(() => {
-        console.log('s');
         const newWs = new WebSocket('wss://api-ws.sofinx.otso-dev.com');
+        setWsState({type: 'open'});
         newWs.onopen = () => {
+            setWsState({type: 'success'});
             console.log('open connection');
             newWs.send('test#Auth@MfPagzMNbunziBC60eoJwR1lGccXdIV6Ky9F458zLDgbrJVRaiuXhufgUwpktTzz');
             newWs.send('test#Subscribe@Signals');
         };
         newWs.onclose = () => {
+            setWsState({type: 'close'});
             console.log('close connection')
         };
         setWs(newWs);
@@ -52,45 +77,39 @@ function WS() {
     }, []);
 
     useEffect(() => {
-        console.log('g');
         const wsClose = wsCallback();
         return () => wsClose();
     }, []);
 
     useEffect(() => {
-        console.log('n');
         if (ws == null) return;
         ws.onmessage = (receive) => {
             const data = JSON.parse(receive.data);
-            console.log(data);
             subscribes.forEach((subscribe) => {
-                if (subscribe.channel === data.event.channel) {
+                if (subscribe.channel === data.channel) {
                     subscribe.func(data.event);
                     return;
                 }
             });
         };
     }, [subscribes, ws]);
-    console.log('p');
-    console.log(subscribeFunc);
     return (
         <SignalsList subscribeFunc={subscribeFunc} unsubscribeFunc={unsubscribeFunc}/>
     );
 }
 
 function SignalsList({subscribeFunc, unsubscribeFunc}) {
-    console.log('l');
-    console.log('lp');
-    console.log(subscribeFunc);
     const signals = signalsData.signals;
-
+    const [signalsState, setSignalsState] = useState({});
     const listItems = signals.map((signal) =>
-        <SignalItem key={signal.id} signal={signal} />
+        <SignalItem key={signal.id} signal={signal} status={signalsState[signal.id]} />
     );
 
     useEffect(() => {
         subscribeFunc('Signals', 'test#Subscribe@Signals', (e) => {
-            console.log('event: ', e);
+            const state = Object.assign({}, signalsState);
+            state[e.id] = e.time;
+            setSignalsState(state);
         });
         return () => unsubscribeFunc('Signals', 'test#Subscribe@Signals');
     }, [subscribeFunc, unsubscribeFunc]);
@@ -104,8 +123,9 @@ function SignalsList({subscribeFunc, unsubscribeFunc}) {
 
 function SignalItem(props) {
     const signal = props.signal;
+    const status = props.status;
     return (
-        <li>{signal.name}</li>
+    <li>{signal.name} {status}</li>
     );
 }
 
